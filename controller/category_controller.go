@@ -31,7 +31,6 @@ func AddCategory(c *gin.Context) {
 	category.NameRU = c.PostForm("name_ru")
 	category.NameEN = c.PostForm("name_en")
 
-	// Validate at least one name is provided
 	if category.NameTM == "" && category.NameRU == "" && category.NameEN == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -53,7 +52,7 @@ func AddCategory(c *gin.Context) {
 
 	file, err := c.FormFile("image")
 	if err == nil {
-		if file.Size > 5<<20 { // 5MB limit
+		if file.Size > 5<<20 {
 			tx.Rollback()
 			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
@@ -121,7 +120,6 @@ func AddCategory(c *gin.Context) {
 	})
 }
 
-// UpdateCategory handles updating an existing food category.
 func UpdateCategory(c *gin.Context) {
 	id := c.Param("id")
 	userID, exists := c.Get("user_id")

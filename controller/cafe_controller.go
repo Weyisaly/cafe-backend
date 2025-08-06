@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -230,72 +229,6 @@ func processLogoUpload(c *gin.Context, cafe *model.Cafe) error {
 
 	cafe.Logo = newFileName
 	return nil
-}
-
-func GetCafe(c *gin.Context) {
-	var cafe []model.Cafe
-	if err := database.DB.Preload("PhoneNumbers").Find(&cafe).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch cafes"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Fetched cafes successfully",
-		"data":    cafe,
-	})
-}
-
-func GetCafeByID(c *gin.Context) {
-	cafeID := c.Param("id")
-	if cafeID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "Cafe ID is required",
-		})
-		return
-	}
-
-	cafeIDUint, err := strconv.ParseUint(cafeID, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "Invalid cafe ID format",
-		})
-		return
-	}
-
-	var cafe model.Cafe
-	result := database.DB.Preload("PhoneNumbers").First(&cafe, uint(cafeIDUint))
-	if result.Error != nil {
-		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{
-				"success": false,
-				"error":   "Cafe not found",
-			})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error":   "Failed to fetch cafe",
-			})
-		}
-		return
-	}
-
-	response := gin.H{
-		"success": true,
-		"data": gin.H{
-			"id":            cafe.ID,
-			"name":          cafe.Name,
-			"user_role":     cafe.UserRole,
-			"logo":          cafe.Logo,
-			"code":          cafe.Code,
-			"expiry_date":   cafe.ExpiryDate,
-			"phone_numbers": cafe.PhoneNumbers,
-		},
-	}
-
-	c.JSON(http.StatusOK, response)
 }
 
 func GetMyCafe(c *gin.Context) {

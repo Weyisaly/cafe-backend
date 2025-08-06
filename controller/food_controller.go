@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 	"net/http"
 	"os"
@@ -152,7 +153,104 @@ func AddFood(c *gin.Context) {
 	})
 }
 
-// UpdateFood handles updating an existing food item.
+func BulkAddFood(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "User ID not found in context"})
+		return
+	}
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Excel file is required"})
+		return
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Unable to open Excel file"})
+		return
+	}
+	defer file.Close()
+
+	xl, err := excelize.OpenReader(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Failed to parse Excel file"})
+		return
+	}
+
+	rows, err := xl.GetRows("Sheet1")
+	if err != nil || len(rows) < 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Excel must have at least one row of data"})
+		return
+	}
+
+	var foods []model.Food
+	for rowIndex, row := range rows[1:] {
+		fmt.Printf("Row %d: %v\n", rowIndex+2, row)
+
+		if len(row) < 4 {
+			fmt.Println("⚠️ Incomplete row skipped")
+			continue
+		}
+
+		price, err := strconv.ParseFloat(row[1], 64)
+		if err != nil || price <= 0 {
+			fmt.Println("❌ Invalid price format:", row[1])
+			continue
+		}
+
+		categoryID, err := strconv.ParseUint(row[0], 10, 32)
+		if err != nil {
+			fmt.Println("❌ Invalid category ID:", row[0])
+			continue
+		}
+
+		descriptionTm := "-"
+		if len(row) > 4 && row[4] != "" {
+			descriptionTm = row[4]
+		}
+
+		descriptionRu := "-"
+		if len(row) > 5 && row[5] != "" {
+			descriptionRu = row[5]
+		}
+
+		food := model.Food{
+			CafeID:        userID.(uint),
+			CategoryID:    uint(categoryID),
+			Price:         price,
+			NameTm:        row[2],
+			NameRu:        row[3],
+			DescriptionTm: descriptionTm,
+			DescriptionRu: descriptionRu,
+		}
+
+		if food.NameTm == "" && food.NameRu == "" {
+			fmt.Println("⚠️ Both names are empty, skipping")
+			continue
+		}
+
+		foods = append(foods, food)
+	}
+
+	if len(foods) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "No valid rows found"})
+		return
+	}
+
+	if err := database.DB.Create(&foods).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Failed to insert foods"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Bulk food upload successful",
+		"count":   len(foods),
+	})
+}
+
 func UpdateFood(c *gin.Context) {
 	id := c.Param("id")
 	userID, exists := c.Get("user_id")
@@ -237,7 +335,6 @@ func UpdateFood(c *gin.Context) {
 			})
 			return
 		}
-		// Validate category belongs to the user's cafe
 		var category model.FoodCategory
 		if err := tx.Where("id = ? AND cafe_id = ?", categoryIDUint, userID.(uint)).First(&category).Error; err != nil {
 			tx.Rollback()
@@ -331,7 +428,6 @@ func UpdateFood(c *gin.Context) {
 	})
 }
 
-// DeleteFood handles deleting a food item and its associated image.
 func DeleteFood(c *gin.Context) {
 	id := c.Param("id")
 	userID, exists := c.Get("user_id")
@@ -415,63 +511,6 @@ func DeleteFood(c *gin.Context) {
 	})
 }
 
-// GetFoods retrieves all food items.
-func GetFoods(c *gin.Context) {
-	var foods []model.Food
-	if err := database.DB.Find(&foods).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   fmt.Sprintf("Failed to fetch foods: %v", err),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Foods retrieved successfully",
-		"data":    foods,
-	})
-}
-
-// GetByStoreIdFoods retrieves foods by cafe ID or all foods if no cafe ID is provided.
-func GetByStoreIdFoods(c *gin.Context) {
-	var foods []model.Food
-	cafeID := c.Query("cafe_id")
-	if cafeID != "" {
-		cafeIDUint, err := strconv.ParseUint(cafeID, 10, 32)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"error":   "Invalid cafe_id format",
-			})
-			return
-		}
-
-		if err := database.DB.Where("cafe_id = ?", uint(cafeIDUint)).Find(&foods).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error":   fmt.Sprintf("Failed to fetch foods: %v", err),
-			})
-			return
-		}
-	} else {
-		if err := database.DB.Find(&foods).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error":   fmt.Sprintf("Failed to fetch foods: %v", err),
-			})
-			return
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Foods retrieved successfully",
-		"data":    foods,
-	})
-}
-
-// GetFoodsByCategoryID retrieves foods by category ID.
 func GetFoodsByCategoryID(c *gin.Context) {
 	categoryID := c.Param("category_id")
 	if categoryID == "" {
@@ -507,55 +546,26 @@ func GetFoodsByCategoryID(c *gin.Context) {
 	})
 }
 
-// GetFoodsFilter retrieves foods with optional filtering and pagination.
-func GetFoodsFilter(c *gin.Context) {
-	query := database.DB.Model(&model.Food{})
-
-	if categoryID := c.Query("category_id"); categoryID != "" {
-		categoryIDUint, err := strconv.ParseUint(categoryID, 10, 32)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"error":   "Invalid category ID format",
-			})
-			return
-		}
-		query = query.Where("category_id = ?", uint(categoryIDUint))
-	}
-
-	if cafeID := c.Query("cafe_id"); cafeID != "" {
-		cafeIDUint, err := strconv.ParseUint(cafeID, 10, 32)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"error":   "Invalid cafe ID format",
-			})
-			return
-		}
-		query = query.Where("cafe_id = ?", uint(cafeIDUint))
-	}
-
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+func GetMyCafeFoods(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,
-			"error":   fmt.Sprintf("Failed to count foods: %v", err),
+			"error":   "User ID not found in context",
 		})
 		return
 	}
 
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 {
-		limit = 10
-	}
-	offset := (page - 1) * limit
-	query = query.Offset(offset).Limit(limit)
+	searchQuery := c.Query("search")
 
 	var foods []model.Food
+	query := database.DB.Where("cafe_id = ?", userID.(uint))
+
+	if searchQuery != "" {
+		searchPattern := "%" + searchQuery + "%"
+		query = query.Where("name_tm ILIKE ? OR name_ru ILIKE ?", searchPattern, searchPattern)
+	}
+
 	if err := query.Find(&foods).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -568,43 +578,9 @@ func GetFoodsFilter(c *gin.Context) {
 		"success": true,
 		"message": "Foods retrieved successfully",
 		"data":    foods,
-		"meta": gin.H{
-			"page":      page,
-			"limit":     limit,
-			"total":     total,
-			"pageCount": (total + int64(limit) - 1) / int64(limit),
-		},
 	})
 }
 
-// GetMyCafeFoods retrieves foods for the authenticated user's cafe.
-func GetMyCafeFoods(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"error":   "User ID not found in context",
-		})
-		return
-	}
-
-	var foods []model.Food
-	if err := database.DB.Where("cafe_id = ?", userID.(uint)).Find(&foods).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   fmt.Sprintf("Failed to fetch foods: %v", err),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Foods retrieved successfully",
-		"data":    foods,
-	})
-}
-
-// GetFoodByID retrieves a specific food item by ID.
 func GetFoodByID(c *gin.Context) {
 	foodID := c.Param("id")
 	if foodID == "" {
